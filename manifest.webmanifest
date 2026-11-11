@@ -1,0 +1,9 @@
+{
+  "name": "Backgammon for Two",
+  "short_name": "Backgammon",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#140e0c",
+  "theme_color": "#140e0c",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
