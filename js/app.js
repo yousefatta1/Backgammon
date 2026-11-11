@@ -1,7 +1,7 @@
 import * as net from './net.js';
 import * as G from './game.js';
 import { pipCount, remainingDice } from './engine.js';
-import { renderBoard, originXY, CHECKER_COLORS } from './board.js';
+import { renderBoard, originXY, CHECKER_COLORS, THEMES } from './board.js';
 import { sfx, setMuted, isMuted } from './sound.js';
 
 // ---------- constants ----------
@@ -50,6 +50,17 @@ const nameOf = (p) => players()[p]?.name || `Player ${p + 1}`;
 const emojiOf = (p) => players()[p]?.emoji || (p ? '🐰' : '🐻');
 const colorOf = (p) => players()[p]?.color || (p ? 'ruby' : 'ivory');
 const who = (p) => `${emojiOf(p)} ${esc(nameOf(p))}`;
+
+// The table style is shared by the couple (stored with the board). Before sign-in we use the
+// last one this device saw. `?theme=` previews a style without saving it.
+let previewTheme = new URLSearchParams(location.search).get('theme');
+function currentTheme() {
+  const t = previewTheme || S()?.theme || readJSON('bg.theme') || 'walnut';
+  return THEMES[t] ? t : 'walnut';
+}
+function applyTheme() {
+  document.documentElement.dataset.theme = currentTheme();
+}
 
 // ---------- boot ----------
 route();
@@ -178,33 +189,63 @@ async function flush() {
 // ======================================================================
 function renderAuth(tab = 'signin', msg = '') {
   document.title = 'Backgammon for Two';
+  applyTheme();
+  const th = currentTheme();
   app.innerHTML = `
   <div class="auth">
-    <section class="auth-hero">
-      <div class="brand big">${logo()}<span>Backgammon<em>for two</em></span></div>
-      <h1>Your board.<br/>Your rivalry.<br/><span class="grad">Your bragging rights.</span></h1>
-      <p class="lede">A private backgammon table for the two of you. Play live from your own phones, put something sweet on the line, and keep score of every game you've ever played.</p>
-      <ul class="perks">
-        <li><span>🎲</span>Live play across two devices, or pass-and-play on one</li>
-        <li><span>💌</span>Stakes like "loser makes coffee", tracked until paid</li>
-        <li><span>🏆</span>All-time scoreboard, streaks, gammons and full history</li>
-        <li><span>😘</span>Emoji reactions that pop up on both screens</li>
-      </ul>
-      <div class="hero-board" aria-hidden="true">${heroBoard()}</div>
-    </section>
-    <section class="auth-panel">
-      <div class="auth-card">
+    <div class="auth-stage" aria-hidden="true"><div class="hero-board">${heroBoard()}</div></div>
+    <div class="auth-shade" aria-hidden="true"></div>
+    <header class="auth-top">
+      <div class="brand">${logo()}<span>Backgammon<em>for two</em></span></div>
+      <div class="table-pick" role="radiogroup" aria-label="Table style">
+        <span>Table</span>
+        ${Object.entries(THEMES).map(([k, t]) => `<button role="radio" aria-checked="${k === th}" class="${k === th ? 'on' : ''}" data-theme-pick="${k}"><i class="tp-${k}"></i><span class="tp-l">${t.label}</span><span class="tp-s">${t.label.split(' ')[0]}</span></button>`).join('')}
+      </div>
+    </header>
+    <main class="auth-main">
+      <section class="auth-copy">
+        <span class="eyebrow">A private table for two</span>
+        <h1>Your board.<br/>Your rivalry.<br/><em>Your bragging rights.</em></h1>
+        <p class="lede">Play live from your own phones, put something sweet on every game, and keep score of every match you've ever played.</p>
+        <ul class="perks">
+          <li>Live across two devices</li><li>Stakes &amp; IOUs</li><li>All-time scoreboard</li><li>Emoji reactions</li>
+        </ul>
+      </section>
+      <section class="auth-card">
         <div class="seg" role="tablist">
           <button role="tab" data-tab="signin" class="${tab === 'signin' ? 'on' : ''}">Sign in</button>
           <button role="tab" data-tab="create" class="${tab === 'create' ? 'on' : ''}">Create your board</button>
         </div>
         ${tab === 'signin' ? signinForm(msg) : createForm(msg)}
-      </div>
-      <p class="fineprint">One account for the two of you. Each of you signs in on your own device with the same board name and passcode.</p>
-    </section>
+        <p class="fineprint">One account for the two of you. Each of you signs in on your own device with the same board name and passcode.</p>
+      </section>
+    </main>
   </div>`;
-  $$('[data-tab]').forEach((b) => b.onclick = () => renderAuth(b.dataset.tab));
+  $$('[data-tab]').forEach((b) => b.onclick = (e) => { e.preventDefault(); renderAuth(b.dataset.tab); });
+  $$('[data-theme-pick]').forEach((b) => b.onclick = () => {
+    writeJSON('bg.theme', b.dataset.themePick);
+    previewTheme = null;
+    const keep = collectForm();
+    renderAuth(tab, msg);
+    restoreForm(keep);
+  });
   if (tab === 'signin') bindSignin(); else bindCreate();
+}
+
+function collectForm() {
+  const f = $('.auth-card form');
+  if (!f) return null;
+  return [...f.elements].filter((e) => e.name).map((e) => [e.name, e.value]);
+}
+function restoreForm(vals) {
+  const f = $('.auth-card form');
+  if (!f || !vals) return;
+  for (const [n, v] of vals) if (f[n]) f[n].value = v;
+  $$('[data-emoji-for]', f).forEach((b) => { b.textContent = f[`emoji${b.dataset.emojiFor}`].value; });
+  $$('[data-color-for]', f).forEach((w) => {
+    const c = f[`color${w.dataset.colorFor}`].value;
+    $$('.sw', w).forEach((s) => s.classList.toggle('on', s.dataset.color === c));
+  });
 }
 
 function signinForm(msg) {
@@ -214,7 +255,7 @@ function signinForm(msg) {
     <p class="sub">Sign in to your shared board.</p>
     ${msg ? `<div class="alert">${esc(msg)}</div>` : ''}
     <label class="field"><span>Board name</span>
-      <input name="handle" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="e.g. yousef-and-sam" required /></label>
+      <input name="handle" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="e.g. yousef-and-miri" required /></label>
     <label class="field"><span>Passcode</span>
       <div class="pw"><input name="pass" type="password" autocomplete="current-password" placeholder="••••••" required />
       <button type="button" class="pw-toggle" aria-label="Show passcode">Show</button></div></label>
@@ -241,7 +282,7 @@ function createForm(msg) {
     <p class="sub">Takes 20 seconds. Then send your partner the board name and passcode.</p>
     ${msg ? `<div class="alert">${esc(msg)}</div>` : ''}
     <label class="field"><span>Board name</span>
-      <input name="handle" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="yousef-and-sam" required />
+      <input name="handle" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="yousef-and-miri" required />
       <small>Lowercase letters, numbers, - or _. This is how you both sign in.</small></label>
     <div class="grid2">
       <label class="field"><span>Passcode</span><input name="pass" type="password" autocomplete="new-password" placeholder="6+ characters" required /></label>
@@ -329,6 +370,7 @@ function bindCreate() {
       { name: name0, emoji: f.emoji0.value, color: f.color0.value },
       { name: name1, emoji: f.emoji1.value, color: f.color1.value },
     ]);
+    state.theme = currentTheme();
     const btn = $('button[type=submit]', f);
     busy(btn, true); formError(f, '');
     try {
@@ -356,6 +398,7 @@ function pickEmoji(anchorEl, onPick) {
 function renderPicker() {
   const ps = players();
   document.title = "Who's playing? · Backgammon";
+  applyTheme();
   app.innerHTML = `
   <div class="picker">
     <div class="brand">${logo()}<span>Backgammon<em>for two</em></span></div>
@@ -420,6 +463,8 @@ function go(view) {
 
 function render() {
   if (!$('#view')) return;
+  applyTheme();
+  if (S()?.theme) writeJSON('bg.theme', S().theme);
   renderHeader();
   renderView();
 }
@@ -449,11 +494,11 @@ function renderHeader() {
     <div class="brand sm">${logo()}<span>Backgammon<em>for two</em></span></div>
     <div class="scoreline" title="All-time wins">
       <span class="sl-p">${presenceDot(0)}<b>${esc(emojiOf(0))}</b><span class="sl-name">${esc(nameOf(0))}</span></span>
-      <span class="sl-n">${st.p[0].wins}</span><span class="sl-sep">:</span><span class="sl-n">${st.p[1].wins}</span>
+      <span class="sl-n">${st.p[0].wins}</span><span class="sl-sep"></span><span class="sl-n">${st.p[1].wins}</span>
       <span class="sl-p"><span class="sl-name">${esc(nameOf(1))}</span><b>${esc(emojiOf(1))}</b>${presenceDot(1)}</span>
     </div>
-    <nav class="topnav">${NAV.map(([k, label, ic]) => `<button data-view="${k}" class="${store.view === k ? 'on' : ''}">${icon(ic)}<span>${label}</span></button>`).join('')}</nav>
-    <span class="live ${store.live ? 'on' : ''}" title="${store.live ? 'Live sync connected' : 'Connecting…'}"><i></i>${store.live ? 'Live' : 'Sync'}</span>`;
+    <nav class="topnav">${NAV.map(([k, label, ic]) => `<button data-view="${k}" class="${store.view === k ? 'on' : ''}" title="${label}">${icon(ic)}<span>${label}</span></button>`).join('')}
+      <span class="live ${store.live ? 'on' : ''}" title="${store.live ? 'Live sync connected' : 'Connecting'}"><i></i></span></nav>`;
   $('.topnav', h).onclick = (e) => { const b = e.target.closest('[data-view]'); if (b) go(b.dataset.view); };
 }
 
@@ -468,29 +513,19 @@ function presenceDot(p) {
 // ======================================================================
 function renderPlay(v) {
   const s = S();
-  if (!v.querySelector('.play')) {
+  if (!v.querySelector('.arena')) {
     v.innerHTML = `
-    <section class="play">
-      <div class="table">
-        <div class="pcard-slot" id="pc-top"></div>
-        <div class="board-wrap" id="board"></div>
-        <div class="pcard-slot" id="pc-bot"></div>
-      </div>
-      <aside class="side">
-        <div class="card status-card" id="status"></div>
-        <div class="card stake-card" id="stake"></div>
-        <div class="card react-card" id="react"></div>
-        <div class="card form-card" id="form"></div>
-      </aside>
+    <section class="arena">
+      <div class="seat top" id="seat-top"></div>
+      <div class="board-wrap" id="board"></div>
+      <div class="seat bot" id="seat-bot"></div>
+      <div class="dock" id="dock"></div>
     </section>`;
     $('#board').onclick = onBoardClick;
-    bindReactions();
   }
   renderPlayers();
   renderBoardArea();
-  renderStatus();
-  renderStake();
-  renderForm();
+  renderDock();
   if (s.phase === 'over' && store.celebrated !== s.gameNo) {
     store.celebrated = s.gameNo;
     if (store.celebratedInit) { celebrate(s.result.winner); sfx.win(); }
@@ -499,37 +534,36 @@ function renderPlay(v) {
 }
 
 function renderPlayers() {
-  const top = $('#pc-top'), bot = $('#pc-bot');
+  const top = $('#seat-top'), bot = $('#seat-bot');
   if (!top || !S()) return;
-  const me = persp(), them = 1 - me;
-  top.innerHTML = playerCard(them);
-  bot.innerHTML = playerCard(me);
+  const me = persp();
+  top.innerHTML = seatHTML(1 - me);
+  bot.innerHTML = seatHTML(me);
 }
 
-function playerCard(p) {
+function seatHTML(p) {
   const s = S();
   const c = CHECKER_COLORS[colorOf(p)];
   const toMove = s.turn === p && (s.phase === 'rolling' || s.phase === 'moving');
   const st = computeStats(store.games);
-  const streak = st.cur && st.cur.p === p && st.cur.n >= 2 ? `<span class="badge fire">🔥 ${st.cur.n} in a row</span>` : '';
+  const streak = st.cur && st.cur.p === p && st.cur.n >= 2 ? `<span class="tag fire">🔥 ${st.cur.n} straight</span>` : '';
+  const leads = st.p[p].wins > st.p[1 - p].wins ? '<span class="tag crown">👑</span>' : '';
   return `
-  <div class="pcard ${toMove ? 'active' : ''}" style="--pc:${c.fill};--pr:${c.rim}">
-    <span class="pc-av">${esc(emojiOf(p))}${presenceDot(p)}</span>
-    <span class="pc-main">
-      <span class="pc-name">${esc(nameOf(p))}${isMine(p) && !shared() ? ' <small>(you)</small>' : ''}</span>
-      <span class="pc-meta"><i class="chip-dot"></i>${c.label} · ${pipCount(s.board, p)} pips · ${s.board.off[p]}/15 off</span>
+  <div class="seat-in ${toMove ? 'active' : ''}" style="--pc:${c.fill};--pr:${c.rim}">
+    <span class="seat-av">${esc(emojiOf(p))}${presenceDot(p)}</span>
+    <span class="seat-id">
+      <span class="seat-name">${esc(nameOf(p))}${isMine(p) && !shared() ? '<small>you</small>' : ''}${leads}</span>
+      <span class="seat-meta"><i class="chip-dot"></i>${c.label}<b>·</b>${pipCount(s.board, p)} pips<b>·</b>${s.board.off[p]}/15 home</span>
     </span>
-    <span class="pc-right">${streak}${toMove ? `<span class="badge turn">${s.phase === 'rolling' ? 'to roll' : 'moving'}</span>` : ''}</span>
+    <span class="seat-r">${streak}${toMove ? `<span class="tag turn">${s.phase === 'rolling' ? 'To roll' : 'Moving'}</span>` : ''}</span>
   </div>`;
 }
 
 function boardOptions() {
   const s = S();
-  const mover = s.turn;
   const o = {
-    board: s.board, persp: persp(), colors: [colorOf(0), colorOf(1)], mover,
-    dice: s.dice, remaining: s.dice ? remainingDice(s.dice, s.made) : null, rolling: store.rolling,
-    anim: store.anim,
+    theme: currentTheme(), board: s.board, persp: persp(), colors: [colorOf(0), colorOf(1)], mover: s.turn,
+    dice: s.dice, remaining: s.dice ? remainingDice(s.dice, s.made) : null, rolling: store.rolling, anim: store.anim,
   };
   if (s.phase === 'moving' && isMine(s.turn)) {
     const legal = G.legalNow(s);
@@ -537,13 +571,10 @@ function boardOptions() {
     if (store.selected != null) o.targets = new Set(legal.filter((m) => m.from === store.selected).map((m) => m.to));
     o.selected = store.selected;
   }
-  if (s.phase === 'opening') {
-    o.rollable = true; o.mover = null; o.rollLabel = '🎲 Opening roll';
-  } else if (s.phase === 'rolling' && isMine(s.turn)) {
-    o.rollable = true; o.rollLabel = '🎲 Roll';
-  }
+  if (s.phase === 'opening') { o.rollable = true; o.mover = null; o.rollLabel = 'Opening roll'; }
+  else if (s.phase === 'rolling' && isMine(s.turn)) { o.rollable = true; o.rollLabel = 'Roll dice'; }
   if (s.opening && s.phase === 'moving' && !s.made.length) {
-    o.opening = `${emojiOf(0)} ${s.opening[0]}  ·  ${emojiOf(1)} ${s.opening[1]}`;
+    o.opening = `${emojiOf(0)} ${s.opening[0]}   ${emojiOf(1)} ${s.opening[1]}`;
   }
   if (s.last && s.last.moves?.length && (s.phase === 'rolling' || (s.phase === 'moving' && !s.made.length))) {
     o.arrows = s.last.moves.map((m) => ({ from: m.from, to: m.to, player: s.last.player }));
@@ -565,121 +596,129 @@ function renderBoardArea() {
 
 function overCard() {
   const s = S(); const r = s.result;
-  const kindLabel = { single: 'Single game', gammon: 'Gammon!', backgammon: 'Backgammon!!' }[r.kind];
+  const kindLabel = { single: 'Single game', gammon: 'Gammon', backgammon: 'Backgammon' }[r.kind];
   return `
   <div class="over">
     <div class="over-card">
       <div class="over-em">${esc(emojiOf(r.winner))}</div>
-      <h2>${esc(nameOf(r.winner))} wins!</h2>
-      <p class="over-kind">${r.resigned ? `${esc(nameOf(1 - r.winner))} resigned` : kindLabel} · <b>${r.points} point${r.points > 1 ? 's' : ''}</b></p>
-      ${r.stake ? `<p class="over-stake">💌 ${esc(nameOf(1 - r.winner))} owes: <b>${esc(r.stake)}</b></p>` : ''}
+      <span class="eyebrow">Game ${s.gameNo}</span>
+      <h2>${esc(nameOf(r.winner))} wins</h2>
+      <p class="over-kind">${r.resigned ? `${esc(nameOf(1 - r.winner))} resigned` : kindLabel}<b>+${r.points} point${r.points > 1 ? 's' : ''}</b></p>
+      ${r.stake ? `<p class="over-stake"><span>${esc(nameOf(1 - r.winner))} owes</span>${esc(r.stake)}</p>` : ''}
       <div class="over-actions">
-        <button class="btn primary" id="rematch">Rematch 🔁</button>
-        <button class="btn ghost" id="to-scores">Scoreboard</button>
+        <button class="btn primary" id="rematch"><span>Rematch</span></button>
+        <button class="btn ghost" id="to-scores"><span>Scoreboard</span></button>
       </div>
     </div>
   </div>`;
 }
 
-function renderStatus() {
-  const el = $('#status');
-  if (!el) return;
+function statusText() {
   const s = S();
-  let title = '', sub = '', actions = '';
   const mine = isMine(s.turn);
+  let title = '', sub = '', primary = null, undo = false;
   if (s.phase === 'opening') {
-    title = `Game ${s.gameNo} · Who goes first?`;
-    sub = 'Each of you throws one die. The higher number moves first using both dice.';
-    actions = `<button class="btn primary" data-act="roll">🎲 Opening roll <kbd>R</kbd></button>`;
+    title = 'Who goes first?';
+    sub = 'Each of you throws one die. Higher number starts.';
+    primary = ['roll', 'Opening roll', 'R'];
   } else if (s.phase === 'rolling') {
     if (mine) {
       title = shared() ? `${who(s.turn)}, your turn` : 'Your turn';
-      sub = s.last?.moves?.length === 0 ? `${esc(nameOf(s.last.player))} couldn't move. Roll when ready.` : 'Gold arrows show the last move. Roll when ready.';
-      actions = `<button class="btn primary" data-act="roll">🎲 Roll dice <kbd>R</kbd></button>`;
+      sub = s.last && !s.last.moves?.length ? `${esc(nameOf(s.last.player))} couldn't move.` : 'Gold arrows trace the last move.';
+      primary = ['roll', 'Roll dice', 'R'];
     } else {
-      title = `Waiting for ${who(s.turn)}`;
-      sub = store.online.has(String(s.turn)) ? `${esc(nameOf(s.turn))} is here and about to roll.` : `${esc(nameOf(s.turn))} isn't on the board right now. Send a nudge 👇`;
+      title = `${who(s.turn)} to roll`;
+      sub = store.online.has(String(s.turn)) ? `${esc(nameOf(s.turn))} is at the table.` : `${esc(nameOf(s.turn))} stepped away. Send a nudge.`;
     }
   } else if (s.phase === 'moving') {
     const legal = G.legalNow(s);
     const rem = remainingDice(s.dice, s.made);
     if (mine) {
+      undo = s.made.length > 0;
       if (!legal.length && !s.made.length) {
-        title = 'No legal moves 😬';
-        sub = `Rolled ${s.dice.join('-')}, but every landing spot is blocked.`;
-        actions = `<button class="btn primary" data-act="done">Pass turn <kbd>↵</kbd></button>`;
+        title = 'No legal moves';
+        sub = `Rolled ${s.dice.join(' and ')}, every landing spot is blocked.`;
+        primary = ['done', 'Pass turn', '↵'];
       } else if (!legal.length) {
         title = 'Turn complete';
-        sub = rem.length ? `The remaining ${rem.join(', ')} can't be played.` : 'Happy with it? Lock it in, or undo to rethink.';
-        actions = `<button class="btn primary" data-act="done">Done <kbd>↵</kbd></button><button class="btn ghost" data-act="undo">Undo <kbd>U</kbd></button>`;
+        sub = rem.length ? `The ${rem.join(', ')} can't be played.` : 'Lock it in, or undo to rethink.';
+        primary = ['done', 'Done', '↵'];
       } else {
         title = shared() ? `${who(s.turn)} to move` : 'Your move';
-        sub = `Dice left: <b>${rem.join(' · ')}</b>. Tap a glowing checker, then where it goes.`;
-        actions = s.made.length ? `<button class="btn ghost" data-act="undo">Undo <kbd>U</kbd></button>` : '';
+        sub = `${rem.join(' · ')} left. Tap a glowing checker.`;
       }
     } else {
-      title = `${who(s.turn)} is moving…`;
-      sub = `Rolled ${s.dice.join('-')}${s.made.length ? `, ${s.made.length} checker${s.made.length > 1 ? 's' : ''} moved so far` : ''}.`;
+      title = `${who(s.turn)} is moving`;
+      sub = `Rolled ${s.dice.join(' and ')}.`;
     }
   } else if (s.phase === 'over') {
-    title = `${who(s.result.winner)} won game ${s.gameNo}`;
+    title = `${who(s.result.winner)} took game ${s.gameNo}`;
     sub = 'Saved to your scoreboard.';
-    actions = `<button class="btn primary" data-act="rematch">Rematch 🔁</button>`;
+    primary = ['rematch', 'Rematch', ''];
   }
-  const canResign = (s.phase === 'rolling' || s.phase === 'moving') && mySeats().length;
-  el.innerHTML = `
-    <div class="status-head"><span class="eyebrow">Game ${s.gameNo}${s.turns ? ` · Turn ${s.turns}` : ''}</span>
-      ${canResign ? '<button class="link danger" data-act="resign">Resign</button>' : ''}</div>
-    <h3>${title}</h3><p>${sub}</p>
-    ${actions ? `<div class="actions">${actions}</div>` : ''}`;
-  el.onclick = (e) => { const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); };
+  return { title, sub, primary, undo };
 }
 
-function renderStake() {
-  const el = $('#stake');
+function renderDock() {
+  const el = $('#dock');
   if (!el) return;
   const s = S();
-  const editable = s.phase === 'opening';
+  const { title, sub, primary, undo } = statusText();
+  const stakeEditable = s.phase === 'opening';
+  const canResign = (s.phase === 'rolling' || s.phase === 'moving') && mySeats().length;
   el.innerHTML = `
-    <div class="eyebrow">Playing for</div>
-    <div class="stake-row">
-      <span class="stake-text ${s.stake ? '' : 'none'}">${s.stake ? esc(s.stake) : 'Nothing yet. Make it interesting?'}</span>
-      ${editable ? `<button class="btn sm ghost" data-act="stake">${s.stake ? 'Change' : 'Set stake'}</button>` : ''}
+    <div class="dock-msg">
+      <span class="eyebrow">Game ${s.gameNo}${s.turns ? ` · Turn ${s.turns}` : ''}</span>
+      <h3>${title}</h3>
+      <p>${sub}</p>
     </div>
-    ${editable ? '' : '<small class="muted">Stakes lock once the game starts.</small>'}`;
-  el.onclick = (e) => { const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); };
-}
-
-function renderForm() {
-  const el = $('#form');
-  if (!el) return;
-  const st = computeStats(store.games);
-  const form = store.games.slice(0, 8);
-  el.innerHTML = `
-    <div class="eyebrow">Recent form</div>
-    ${form.length ? `<div class="form-dots">${form.slice().reverse().map((g) => `<span class="fd" title="${esc(nameOf(g.winner))} · ${g.kind}">${esc(emojiOf(g.winner))}</span>`).join('')}</div>` : '<p class="muted">Your first game will show up here.</p>'}
-    <div class="mini-stats">
-      <div><b>${st.p[0].points}</b><span>${esc(emojiOf(0))} points</span></div>
-      <div><b>${st.total}</b><span>games</span></div>
-      <div><b>${st.p[1].points}</b><span>${esc(emojiOf(1))} points</span></div>
+    <div class="dock-actions">
+      <button class="stake-pill ${s.stake ? '' : 'none'} ${stakeEditable ? 'edit' : ''}" data-act="stake" ${stakeEditable ? '' : 'disabled'} title="${stakeEditable ? 'Set what this game is for' : 'Stakes lock once the game starts'}">
+        <span class="sp-ic">💌</span><span class="sp-t">${s.stake ? esc(s.stake) : stakeEditable ? 'Add a stake' : 'No stake'}</span>
+      </button>
+      <span class="dock-grow"></span>
+      ${undo ? `<button class="round" data-act="undo" title="Undo (U)" aria-label="Undo">${icon('<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>')}</button>` : ''}
+      ${primary ? `<button class="btn primary" data-act="${primary[0]}"><span>${primary[1]}</span>${primary[2] ? `<kbd>${primary[2]}</kbd>` : ''}</button>` : ''}
+      <button class="round react-toggle" data-act="react" aria-label="Send a reaction" aria-expanded="false">😘</button>
+      ${canResign ? `<button class="round" data-act="more" aria-label="More">${icon('<circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/>')}</button>` : ''}
+    </div>
+    <div class="pop react-pop" hidden>
+      <div class="react-row">${REACTIONS.map((e) => `<button class="react" data-e="${e}" aria-label="Send ${e}">${e}</button>`).join('')}</div>
+      <div class="phrase-row">${PHRASES.map((t) => `<button class="phrase" data-t="${esc(t)}">${esc(t)}</button>`).join('')}</div>
+    </div>
+    <div class="pop more-pop" hidden>
+      <button class="menu-item danger" data-act="resign">Resign this game</button>
     </div>`;
+  el.onclick = (e) => {
+    const r = e.target.closest('[data-e],[data-t]');
+    if (r) return sendReaction(r);
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    if (b.dataset.act === 'react') return togglePop('.react-pop', b);
+    if (b.dataset.act === 'more') return togglePop('.more-pop', b);
+    closePops();
+    act(b.dataset.act);
+  };
 }
 
-function bindReactions() {
-  const el = $('#react');
-  el.innerHTML = `
-    <div class="eyebrow">Send a reaction</div>
-    <div class="react-row">${REACTIONS.map((e) => `<button class="react" data-e="${e}" aria-label="Send ${e}">${e}</button>`).join('')}</div>
-    <div class="phrase-row">${PHRASES.map((t) => `<button class="phrase" data-t="${esc(t)}">${esc(t)}</button>`).join('')}</div>`;
-  el.onclick = (e) => {
-    const b = e.target.closest('[data-e],[data-t]');
-    if (!b) return;
-    const from = shared() ? (S().turn ?? 0) : mySeats()[0];
-    const payload = { from, emoji: b.dataset.e || null, text: b.dataset.t || null };
-    showReaction(payload, true);
-    store.conn?.send('react', payload);
-    b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop');
-  };
+function togglePop(sel, btn) {
+  const p = $(sel, $('#dock'));
+  const open = p.hidden;
+  closePops();
+  p.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+  if (open) setTimeout(() => document.addEventListener('click', outside, { once: true }), 0);
+  function outside(e) { if (!e.target.closest('.pop, [data-act=react], [data-act=more]')) closePops(); else document.addEventListener('click', outside, { once: true }); }
+}
+function closePops() { $$('#dock .pop').forEach((p) => { p.hidden = true; }); }
+
+function sendReaction(b) {
+  const from = shared() ? (S().turn ?? 0) : mySeats()[0];
+  const payload = { from, emoji: b.dataset.e || null, text: b.dataset.t || null };
+  showReaction(payload, true);
+  store.conn?.send('react', payload);
+  b.classList.remove('pop-anim'); void b.offsetWidth; b.classList.add('pop-anim');
+  if (b.dataset.t) closePops();
 }
 
 // ---------- interaction ----------
@@ -1070,6 +1109,15 @@ function renderSettings(v) {
       </form>
     </div>
 
+    <div class="card">
+      <div class="card-head"><h2>Table</h2><span class="muted">Changes the board for both of you</span></div>
+      <div class="theme-grid">${Object.entries(THEMES).map(([k, t]) => `
+        <button class="theme-tile ${currentTheme() === k ? 'on' : ''}" data-theme-set="${k}">
+          ${renderBoard({ theme: k, board: miniBoard(), persp: 0, colors: [colorOf(0), colorOf(1)], mover: 0, idp: `tt-${k}-` })}
+          <span>${t.label}</span>
+        </button>`).join('')}</div>
+    </div>
+
     <div class="grid2 settings-grid">
       <div class="card">
         <div class="card-head"><h2>This device</h2></div>
@@ -1122,6 +1170,14 @@ function renderSettings(v) {
     ] });
     toast('Players saved ✨');
   };
+  $$('[data-theme-set]').forEach((b) => b.onclick = () => {
+    const theme = b.dataset.themeSet;
+    if (theme === currentTheme() && !previewTheme) return;
+    previewTheme = null;
+    commit({ ...S(), theme });
+    $$('[data-theme-set]').forEach((x) => x.classList.toggle('on', x === b));
+    toast(`${THEMES[theme].label} it is`);
+  });
   $('#sound-toggle').onclick = (e) => {
     setMuted(!isMuted());
     e.currentTarget.classList.toggle('on', !isMuted());
@@ -1155,14 +1211,20 @@ function renderSettings(v) {
 function logo() {
   return `<svg class="logo" viewBox="0 0 40 40" aria-hidden="true">
     <rect x="3" y="3" width="34" height="34" rx="9" fill="url(#lg)"/>
-    <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4b38a"/><stop offset="1" stop-color="#d9516b"/></linearGradient></defs>
-    <circle cx="12" cy="12" r="3" fill="#2a1414"/><circle cx="28" cy="28" r="3" fill="#2a1414"/>
-    <path d="M20 26.5s-6.5-4-6.5-8.2a3.5 3.5 0 0 1 6.5-1.8 3.5 3.5 0 0 1 6.5 1.8c0 4.2-6.5 8.2-6.5 8.2Z" fill="#fff"/>
+    <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0d690"/><stop offset="1" stop-color="#a57b2c"/></linearGradient></defs>
+    <circle cx="12" cy="12" r="3" fill="#2a1a0a"/><circle cx="28" cy="28" r="3" fill="#2a1a0a"/>
+    <path d="M20 26.5s-6.5-4-6.5-8.2a3.5 3.5 0 0 1 6.5-1.8 3.5 3.5 0 0 1 6.5 1.8c0 4.2-6.5 8.2-6.5 8.2Z" fill="#7a1220"/>
   </svg>`;
+}
+
+function miniBoard() {
+  const b = { pts: Array(24).fill(0), bar: [0, 0], off: [0, 0] };
+  Object.assign(b.pts, { 23: 2, 12: 5, 7: 3, 5: 5, 0: -2, 11: -5, 16: -3, 18: -5 });
+  return b;
 }
 
 function heroBoard() {
   const b = { pts: Array(24).fill(0), bar: [0, 0], off: [0, 0] };
   Object.assign(b.pts, { 23: 2, 12: 5, 7: 3, 5: 5, 0: -2, 11: -5, 16: -3, 18: -5 });
-  return renderBoard({ board: b, persp: 0, colors: ['ivory', 'ruby'], dice: [6, 3], mover: 0 });
+  return renderBoard({ theme: currentTheme(), board: b, persp: 0, colors: ['ivory', 'ruby'], dice: [6, 3], mover: 0, idp: 'hero-' });
 }
